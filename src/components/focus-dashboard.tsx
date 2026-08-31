@@ -33,7 +33,7 @@ type StoredTimer = {
 const SESSION_STORAGE_KEY = "maxxing.sessions.v1";
 const TIMER_STORAGE_KEY = "maxxing.timer.v1";
 const MAX_MINUTES = 240;
-const GRID_WEEKS = 26;
+const GRID_WEEKS = 20;
 
 function clampMinutes(value: number) {
   return Math.min(MAX_MINUTES, Math.max(1, Math.round(value || 1)));
@@ -349,29 +349,29 @@ export default function FocusDashboard() {
         </a>
         <div className="header-meta">
           <span className="header-dot" />
-          Stored privately on this device
+          Local only
         </div>
       </header>
 
       <section className="workspace" id="focus">
         <div className="intro">
-          <p className="eyebrow">Daily practice</p>
-          <h1>What will you master today?</h1>
+          <div>
+            <p className="eyebrow">Personal focus timer</p>
+            <h1>Practice with intention.</h1>
+          </div>
           <p className="lede">
-            Define one clear learning target, choose your own duration, and
-            turn focused time into visible progress.
+            Pick one skill, set the time, and let consistency do the rest.
           </p>
         </div>
 
         <section className="focus-panel" aria-labelledby="session-heading">
           <div className="session-form">
-            <div className={`status-badge status-${status}`}>
-              <span /> {statusLabel}
+            <div className="session-heading-row">
+              <h2 id="session-heading">Focus session</h2>
+              <div className={`status-badge status-${status}`}>
+                <span /> {statusLabel}
+              </div>
             </div>
-            <h2 id="session-heading">Plan the next block.</h2>
-            <p className="panel-copy">
-              Keep the target small enough to finish and specific enough to measure.
-            </p>
 
             <div className="field-grid">
               <label htmlFor="topic">
@@ -403,25 +403,26 @@ export default function FocusDashboard() {
             </div>
 
             <div className="button-row">
-              <button
-                className="primary-button"
-                type="button"
-                onClick={startTimer}
-                disabled={status === "running"}
-              >
-                <Play size={16} aria-hidden="true" />
-                {status === "paused" ? "Resume" : "Start focus"}
-              </button>
-              <button type="button" onClick={pauseTimer} disabled={status !== "running"}>
-                <Pause size={16} aria-hidden="true" /> Pause
-              </button>
-              <button
-                type="button"
-                onClick={() => completeSession(false)}
-                disabled={status === "ready"}
-              >
-                <Square size={15} aria-hidden="true" /> Stop & save
-              </button>
+              {status === "ready" ? (
+                <button className="primary-button" type="button" onClick={startTimer}>
+                  <Play size={16} aria-hidden="true" /> Start focus
+                </button>
+              ) : (
+                <>
+                  {status === "running" ? (
+                    <button className="primary-button" type="button" onClick={pauseTimer}>
+                      <Pause size={16} aria-hidden="true" /> Pause
+                    </button>
+                  ) : (
+                    <button className="primary-button" type="button" onClick={startTimer}>
+                      <Play size={16} aria-hidden="true" /> Resume
+                    </button>
+                  )}
+                  <button className="secondary-button" type="button" onClick={() => completeSession(false)}>
+                    <Square size={15} aria-hidden="true" /> Finish & save
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="form-message" aria-live="polite">
@@ -430,7 +431,6 @@ export default function FocusDashboard() {
           </div>
 
           <div className="timer-area">
-            <span className={`timer-status timer-status-${status}`}>{statusLabel}</span>
             <div
               className="timer-ring"
               style={{ "--timer-progress": `${progress}%` } as React.CSSProperties}
@@ -440,7 +440,7 @@ export default function FocusDashboard() {
               <span>{formatTimer(remainingSeconds)}</span>
             </div>
             <p className="timer-topic">
-              {status === "ready" ? "Ready for your next session" : topic}
+              {status === "ready" ? "Ready when you are" : topic}
             </p>
           </div>
         </section>
@@ -463,10 +463,7 @@ export default function FocusDashboard() {
         <section className="activity-layout">
           <article className="activity-panel">
             <div className="section-heading">
-              <div>
-                <p className="eyebrow">Consistency map</p>
-                <h2>Build proof of practice.</h2>
-              </div>
+              <h2>Practice activity</h2>
               <span className="week-total">{minutesLabel(weekMinutes)} this week</span>
             </div>
 
@@ -506,10 +503,7 @@ export default function FocusDashboard() {
 
           <article className="recent-panel">
             <div className="section-heading compact-heading">
-              <div>
-                <p className="eyebrow">Recent focus</p>
-                <h2>Latest sessions.</h2>
-              </div>
+              <h2>Recent sessions</h2>
               <BarChart3 size={19} aria-hidden="true" />
             </div>
 
