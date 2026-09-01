@@ -1,4 +1,4 @@
-import { Check, Pause, Play, RotateCcw } from "lucide-react";
+import { Check, Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import { formatTimer, type TimerStatus } from "@/lib/focus";
 
 type FocusTimerProps = {
@@ -6,10 +6,12 @@ type FocusTimerProps = {
   status: TimerStatus;
   remainingSeconds: number;
   progress: number;
+  soundEnabled: boolean;
   onPause: () => void;
   onResume: () => void;
   onFinish: () => void;
   onDiscard: () => void;
+  onToggleSound: () => void;
 };
 
 const STATUS_COPY: Record<TimerStatus, { label: string; note: string }> = {
@@ -23,10 +25,12 @@ export function FocusTimer({
   status,
   remainingSeconds,
   progress,
+  soundEnabled,
   onPause,
   onResume,
   onFinish,
   onDiscard,
+  onToggleSound,
 }: FocusTimerProps) {
   const circumference = 2 * Math.PI * 128;
   const dashOffset = circumference - (Math.min(100, Math.max(0, progress)) / 100) * circumference;
@@ -36,10 +40,23 @@ export function FocusTimer({
     <section className={`timer-panel timer-${status}`} aria-labelledby="timer-heading">
       <div className="timer-topline">
         <span className="timer-step">02 / Focus</span>
-        <span className="timer-status">
-          <i aria-hidden="true" />
-          {copy.label}
-        </span>
+        <div className="timer-utilities">
+          <button
+            className="sound-toggle"
+            type="button"
+            onClick={onToggleSound}
+            aria-label={soundEnabled ? "Turn completion alarm off" : "Turn completion alarm on"}
+            aria-pressed={soundEnabled}
+            title={soundEnabled ? "Alarm on" : "Alarm off"}
+          >
+            {soundEnabled ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
+            <span>{soundEnabled ? "Alarm on" : "Alarm off"}</span>
+          </button>
+          <span className="timer-status">
+            <i aria-hidden="true" />
+            {copy.label}
+          </span>
+        </div>
       </div>
 
       <div className="clock-wrap">

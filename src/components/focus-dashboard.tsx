@@ -20,6 +20,7 @@ import {
   isValidDuration,
   MAX_MINUTES,
   SESSION_STORAGE_KEY,
+  SOUND_STORAGE_KEY,
   TIMER_STORAGE_KEY,
   type SessionRecord,
   type StoredTimer,
@@ -36,13 +37,19 @@ export default function FocusDashboard() {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [hydrated, setHydrated] = useState(false);
   const completionLock = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       let restoredSessions: SessionRecord[] = [];
       let storageWasRepaired = false;
+
+      if (window.localStorage.getItem(SOUND_STORAGE_KEY) === "off") {
+        setSoundEnabled(false);
+      }
 
       try {
         const savedSessions = JSON.parse(
@@ -128,6 +135,21 @@ export default function FocusDashboard() {
   }, [hydrated, sessions]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(SOUND_STORAGE_KEY, soundEnabled ? "on" : "off");
+  }, [hydrated, soundEnabled]);
+
+  useEffect(() => {
+    return () => {
+      const context = audioContextRef.current;
+      audioContextRef.current = null;
+      if (context && context.state !== "closed") {
+        void context.close();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!hydrated || status !== "ready") return;
     window.localStorage.removeItem(TIMER_STORAGE_KEY);
   }, [hydrated, status]);
@@ -168,6 +190,61 @@ export default function FocusDashboard() {
     setMessage(notice);
   }, [minutesInput]);
 
+  const getAudioContext = useCallback(() => {
+    if (audioContextRef.current?.state === "closed") {
+      audioContextRef.current = null;
+    }
+    if (audioContextRef.current) return audioContextRef.current;
+
+    const AudioContextClass = window.AudioContext ??
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return null;
+
+    const context = new AudioContextClass();
+    audioContextRef.current = context;
+    return context;
+  }, []);
+
+  const playCompletionAlarm = useCallback(() => {
+    if (!soundEnabled) return;
+    const context = getAudioContext();
+    if (!context) return;
+
+    const playNotes = () => {
+      const startAt = context.currentTime + 0.04;
+      const notes = [
+        { frequency: 523.25, delay: 0, duration: 0.18 },
+        { frequency: 659.25, delay: 0.22, duration: 0.18 },
+        { frequency: 783.99, delay: 0.44, duration: 0.42 },
+        { frequency: 523.25, delay: 1.02, duration: 0.18 },
+        { frequency: 659.25, delay: 1.24, duration: 0.18 },
+        { frequency: 783.99, delay: 1.46, duration: 0.62 },
+      ];
+
+      notes.forEach(({ frequency, delay, duration }) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const noteStart = startAt + delay;
+        const noteEnd = noteStart + duration;
+
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(frequency, noteStart);
+        gain.gain.setValueAtTime(0.0001, noteStart);
+        gain.gain.exponentialRampToValueAtTime(0.2, noteStart + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(noteStart);
+        oscillator.stop(noteEnd + 0.02);
+      });
+    };
+
+    playNotes();
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+    }
+  }, [getAudioContext, soundEnabled]);
+
   const completeSession = useCallback((timerFinished = false) => {
     if (completionLock.current) return;
 
@@ -192,9 +269,14 @@ export default function FocusDashboard() {
       completedAt: new Date().toISOString(),
     };
 
+    if (timerFinished) {
+      playCompletionAlarm();
+    }
     setSessions((current) => [record, ...current]);
-    resetTimer(`${durationMinutes} focused minute${durationMinutes === 1 ? "" : "s"} added to your log.`);
-  }, [minutesInput, remainingSeconds, resetTimer, topic, totalSeconds]);
+    resetTimer(
+      `${timerFinished ? "Time's up — " : ""}${durationMinutes} focused minute${durationMinutes === 1 ? "" : "s"} added to your log.`,
+    );
+  }, [minutesInput, playCompletionAlarm, remainingSeconds, resetTimer, topic, totalSeconds]);
 
   useEffect(() => {
     if (status !== "running" || !endAt) return;
@@ -308,6 +390,12 @@ export default function FocusDashboard() {
 
     const plannedMinutes = clampMinutes(Number(minutesInput));
     const seconds = status === "paused" ? remainingSeconds : plannedMinutes * 60;
+    if (soundEnabled) {
+      const context = getAudioContext();
+      if (context?.state === "suspended") {
+        void context.resume();
+      }
+    }
     completionLock.current = false;
     setTopic(topic.trim());
     setMinutesInput(String(plannedMinutes));
@@ -347,6 +435,19 @@ export default function FocusDashboard() {
     setMessage("Session removed from your log.");
   }
 
+  function toggleSound() {
+    const nextSoundEnabled = !soundEnabled;
+    setSoundEnabled(nextSoundEnabled);
+    setMessage(nextSoundEnabled ? "Completion alarm turned on." : "Completion alarm turned off.");
+
+    if (nextSoundEnabled) {
+      const context = getAudioContext();
+      if (context?.state === "suspended") {
+        void context.resume();
+      }
+    }
+  }
+
   return (
     <main className="app-shell" id="main-content">
       <AppHeader />
@@ -379,10 +480,12 @@ export default function FocusDashboard() {
           status={status}
           remainingSeconds={remainingSeconds}
           progress={progress}
+          soundEnabled={soundEnabled}
           onPause={pauseTimer}
           onResume={startTimer}
           onFinish={() => completeSession(false)}
           onDiscard={discardTimer}
+          onToggleSound={toggleSound}
         />
       </div>
 

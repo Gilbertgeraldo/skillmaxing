@@ -18,6 +18,7 @@ export type StoredTimer = {
 
 export const SESSION_STORAGE_KEY = "maxxing.sessions.v1";
 export const TIMER_STORAGE_KEY = "maxxing.timer.v1";
+export const SOUND_STORAGE_KEY = "maxxing.sound.v1";
 export const DEFAULT_MINUTES = 50;
 export const MAX_MINUTES = 240;
 export const GRID_WEEKS = 20;

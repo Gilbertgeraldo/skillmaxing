@@ -8,6 +8,7 @@ Personal deliberate-practice tracker built with Next.js, React, TypeScript, and 
 
 - Custom learning topic and session duration (1–240 minutes)
 - Accurate start, pause, resume, and stop/save timer flow
+- Optional audible alarm when a focus session reaches zero
 - Active timer recovery after a refresh or closed tab
 - Device-local session history using `localStorage`
 - GitHub-style contribution grid based on focused minutes

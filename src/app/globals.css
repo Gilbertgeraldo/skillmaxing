@@ -28,7 +28,7 @@
 @theme inline {
   --color-background: var(--canvas);
   --color-foreground: var(--ink);
-  --font-sans: var(--font-instrument-sans);
+  --font-sans: var(--font-manrope);
   --font-mono: var(--font-ibm-plex-mono);
 }
 
@@ -45,7 +45,7 @@ body {
   margin: 0;
   background: var(--canvas);
   color: var(--ink);
-  font-family: var(--font-instrument-sans), Arial, sans-serif;
+  font-family: var(--font-manrope), Arial, sans-serif;
 }
 
 button,
@@ -458,6 +458,31 @@ button:disabled {
 
 .timer-step {
   color: #aebdc8;
+}
+
+.timer-utilities {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #aebdc8;
+  font: 500 8px/1.2 var(--font-ibm-plex-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.sound-toggle:hover {
+  color: #fff;
 }
 
 .timer-status {
@@ -1122,6 +1147,14 @@ button:disabled {
   .timer-panel {
     min-height: 510px;
     padding: 28px 18px 24px;
+  }
+
+  .timer-utilities {
+    gap: 10px;
+  }
+
+  .sound-toggle span {
+    display: none;
   }
 
   .clock-wrap {
