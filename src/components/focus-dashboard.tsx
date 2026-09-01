@@ -1,166 +1,118 @@
 "use client";
 
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppHeader } from "@/components/app-header";
+import { FocusTimer } from "@/components/focus-timer";
+import { PracticeActivity } from "@/components/practice-activity";
+import { PracticeStats } from "@/components/practice-stats";
+import { SessionHistory } from "@/components/session-history";
+import { SessionPlanner } from "@/components/session-planner";
 import {
-  BarChart3,
-  Check,
-  Clock3,
-  Flame,
-  Pause,
-  Play,
-  Square,
-  Target,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-
-type TimerStatus = "ready" | "running" | "paused";
-
-type SessionRecord = {
-  id: string;
-  topic: string;
-  durationMinutes: number;
-  completedAt: string;
-};
-
-type StoredTimer = {
-  topic: string;
-  plannedMinutes: number;
-  totalSeconds: number;
-  remainingSeconds: number;
-  status: Exclude<TimerStatus, "ready">;
-  endAt: number | null;
-};
-
-const SESSION_STORAGE_KEY = "maxxing.sessions.v1";
-const TIMER_STORAGE_KEY = "maxxing.timer.v1";
-const MAX_MINUTES = 240;
-const GRID_WEEKS = 20;
-
-function clampMinutes(value: number) {
-  return Math.min(MAX_MINUTES, Math.max(1, Math.round(value || 1)));
-}
-
-function formatTimer(totalSeconds: number) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function dateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function minutesLabel(minutes: number) {
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `${hours}h ${rest}m` : `${hours}h`;
-}
-
-function contributionLevel(minutes: number) {
-  if (minutes <= 0) return 0;
-  if (minutes <= 25) return 1;
-  if (minutes <= 60) return 2;
-  if (minutes <= 120) return 3;
-  return 4;
-}
-
-function isSessionRecord(value: unknown): value is SessionRecord {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<SessionRecord>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.topic === "string" &&
-    typeof record.durationMinutes === "number" &&
-    typeof record.completedAt === "string"
-  );
-}
-
-function calculateStreak(activity: Map<string, number>) {
-  const cursor = new Date();
-  cursor.setHours(0, 0, 0, 0);
-
-  if (!activity.get(dateKey(cursor))) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  let streak = 0;
-  while (activity.get(dateKey(cursor))) {
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return streak;
-}
+  calculateStreak,
+  clampMinutes,
+  createSessionId,
+  dateKey,
+  DEFAULT_MINUTES,
+  formatTimer,
+  GRID_WEEKS,
+  isSessionRecord,
+  isStoredTimer,
+  isValidDuration,
+  MAX_MINUTES,
+  SESSION_STORAGE_KEY,
+  TIMER_STORAGE_KEY,
+  type SessionRecord,
+  type StoredTimer,
+  type TimerStatus,
+} from "@/lib/focus";
 
 export default function FocusDashboard() {
-  const [topic, setTopic] = useState("Dynamic Programming — Knapsack");
-  const [minutesInput, setMinutesInput] = useState("50");
-  const [totalSeconds, setTotalSeconds] = useState(50 * 60);
-  const [remainingSeconds, setRemainingSeconds] = useState(50 * 60);
+  const [topic, setTopic] = useState("");
+  const [minutesInput, setMinutesInput] = useState(String(DEFAULT_MINUTES));
+  const [totalSeconds, setTotalSeconds] = useState(DEFAULT_MINUTES * 60);
+  const [remainingSeconds, setRemainingSeconds] = useState(DEFAULT_MINUTES * 60);
   const [status, setStatus] = useState<TimerStatus>("ready");
   const [endAt, setEndAt] = useState<number | null>(null);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const completionLock = useRef(false);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
+      let restoredSessions: SessionRecord[] = [];
+      let storageWasRepaired = false;
+
       try {
         const savedSessions = JSON.parse(
           window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "[]",
-        );
-        let restoredSessions: SessionRecord[] = Array.isArray(savedSessions)
-          ? savedSessions.filter(isSessionRecord)
-          : [];
+        ) as unknown;
 
+        if (Array.isArray(savedSessions)) {
+          restoredSessions = savedSessions.filter(isSessionRecord);
+          storageWasRepaired = restoredSessions.length !== savedSessions.length;
+        } else {
+          storageWasRepaired = true;
+        }
+      } catch {
+        storageWasRepaired = true;
+        window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+
+      try {
         const savedTimerRaw = window.localStorage.getItem(TIMER_STORAGE_KEY);
         if (savedTimerRaw) {
-          const savedTimer = JSON.parse(savedTimerRaw) as Partial<StoredTimer>;
-          if (
-            typeof savedTimer.topic === "string" &&
-            typeof savedTimer.plannedMinutes === "number" &&
-            typeof savedTimer.totalSeconds === "number" &&
-            typeof savedTimer.remainingSeconds === "number" &&
-            (savedTimer.status === "running" || savedTimer.status === "paused")
-          ) {
-            const restoredRemaining =
-              savedTimer.status === "running" && typeof savedTimer.endAt === "number"
-                ? Math.max(0, Math.ceil((savedTimer.endAt - Date.now()) / 1000))
-                : savedTimer.remainingSeconds;
+          const savedTimer = JSON.parse(savedTimerRaw) as unknown;
 
-            if (restoredRemaining === 0) {
-              if (savedTimer.status === "running") {
-                restoredSessions = [
-                  {
-                    id: window.crypto.randomUUID(),
-                    topic: savedTimer.topic,
-                    durationMinutes: clampMinutes(savedTimer.plannedMinutes),
-                    completedAt: new Date(savedTimer.endAt ?? Date.now()).toISOString(),
-                  },
-                  ...restoredSessions,
-                ];
-                setMessage("Your completed focus session was restored.");
-              }
-              window.localStorage.removeItem(TIMER_STORAGE_KEY);
-            } else {
-              setTopic(savedTimer.topic);
-              setMinutesInput(String(savedTimer.plannedMinutes));
-              setTotalSeconds(savedTimer.totalSeconds);
-              setRemainingSeconds(restoredRemaining);
-              setStatus(savedTimer.status);
-              setEndAt(savedTimer.endAt ?? null);
+          if (!isStoredTimer(savedTimer)) {
+            throw new Error("Invalid saved timer");
+          }
+
+          const restoredRemaining =
+            savedTimer.status === "running" && savedTimer.endAt
+              ? Math.max(0, Math.ceil((savedTimer.endAt - Date.now()) / 1000))
+              : savedTimer.remainingSeconds;
+
+          if (restoredRemaining === 0) {
+            if (savedTimer.status === "running") {
+              restoredSessions = [
+                {
+                  id: createSessionId(),
+                  topic: savedTimer.topic,
+                  durationMinutes: clampMinutes(savedTimer.plannedMinutes),
+                  completedAt: new Date(savedTimer.endAt ?? Date.now()).toISOString(),
+                },
+                ...restoredSessions,
+              ];
+              setMessage("Your finished session was recovered and added to the log.");
             }
+            window.localStorage.removeItem(TIMER_STORAGE_KEY);
+          } else {
+            setTopic(savedTimer.topic);
+            setMinutesInput(String(savedTimer.plannedMinutes));
+            setTotalSeconds(savedTimer.totalSeconds);
+            setRemainingSeconds(restoredRemaining);
+            setStatus(savedTimer.status);
+            setEndAt(savedTimer.status === "running" ? savedTimer.endAt : null);
+            setMessage(
+              savedTimer.status === "running"
+                ? "Your active session was restored."
+                : "Your paused session is ready to continue.",
+            );
           }
         }
-        setSessions(restoredSessions);
       } catch {
         window.localStorage.removeItem(TIMER_STORAGE_KEY);
-      } finally {
-        setHydrated(true);
+        setMessage("A damaged saved timer was removed safely.");
       }
+
+      if (storageWasRepaired) {
+        setMessage("Invalid history entries were removed safely.");
+      }
+
+      setSessions(restoredSessions);
+      setHydrated(true);
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -168,53 +120,81 @@ export default function FocusDashboard() {
 
   useEffect(() => {
     if (!hydrated) return;
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
+    try {
+      window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
+    } catch {
+      // Keep the in-memory session usable when browser storage is unavailable.
+    }
   }, [hydrated, sessions]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (status === "ready") {
-      window.localStorage.removeItem(TIMER_STORAGE_KEY);
-      return;
-    }
+    if (!hydrated || status !== "ready") return;
+    window.localStorage.removeItem(TIMER_STORAGE_KEY);
+  }, [hydrated, status]);
 
+  useEffect(() => {
+    if (!hydrated || status !== "running" || !endAt) return;
+    const timer: StoredTimer = {
+      topic,
+      plannedMinutes: clampMinutes(Number(minutesInput)),
+      totalSeconds,
+      remainingSeconds: totalSeconds,
+      status,
+      endAt,
+    };
+    window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer));
+  }, [endAt, hydrated, minutesInput, status, topic, totalSeconds]);
+
+  useEffect(() => {
+    if (!hydrated || status !== "paused") return;
     const timer: StoredTimer = {
       topic,
       plannedMinutes: clampMinutes(Number(minutesInput)),
       totalSeconds,
       remainingSeconds,
       status,
-      endAt,
+      endAt: null,
     };
     window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer));
-  }, [endAt, hydrated, minutesInput, remainingSeconds, status, topic, totalSeconds]);
+  }, [hydrated, minutesInput, remainingSeconds, status, topic, totalSeconds]);
 
-  const completeSession = useCallback(
-    (timerFinished = false) => {
-      const elapsedSeconds = timerFinished
-        ? totalSeconds
-        : Math.max(0, totalSeconds - remainingSeconds);
-      const durationMinutes = timerFinished
-        ? clampMinutes(Number(minutesInput))
-        : Math.max(1, Math.ceil(elapsedSeconds / 60));
+  const resetTimer = useCallback((notice = "") => {
+    const nextTotal = clampMinutes(Number(minutesInput)) * 60;
+    setStatus("ready");
+    setEndAt(null);
+    setTotalSeconds(nextTotal);
+    setRemainingSeconds(nextTotal);
+    setError("");
+    setMessage(notice);
+  }, [minutesInput]);
 
-      const record: SessionRecord = {
-        id: window.crypto.randomUUID(),
-        topic: topic.trim(),
-        durationMinutes,
-        completedAt: new Date().toISOString(),
-      };
+  const completeSession = useCallback((timerFinished = false) => {
+    if (completionLock.current) return;
 
-      setSessions((current) => [record, ...current]);
-      setStatus("ready");
-      setEndAt(null);
-      const nextTotal = clampMinutes(Number(minutesInput)) * 60;
-      setTotalSeconds(nextTotal);
-      setRemainingSeconds(nextTotal);
-      setError("");
-      setMessage(`${durationMinutes} focused minutes saved to your activity.`);
-    }, [minutesInput, remainingSeconds, topic, totalSeconds],
-  );
+    const elapsedSeconds = timerFinished
+      ? totalSeconds
+      : Math.max(0, totalSeconds - remainingSeconds);
+
+    if (!timerFinished && elapsedSeconds < 10) {
+      resetTimer("Session discarded because no meaningful time had elapsed.");
+      return;
+    }
+
+    completionLock.current = true;
+    const durationMinutes = timerFinished
+      ? clampMinutes(Number(minutesInput))
+      : Math.max(1, Math.round(elapsedSeconds / 60));
+
+    const record: SessionRecord = {
+      id: createSessionId(),
+      topic: topic.trim(),
+      durationMinutes,
+      completedAt: new Date().toISOString(),
+    };
+
+    setSessions((current) => [record, ...current]);
+    resetTimer(`${durationMinutes} focused minute${durationMinutes === 1 ? "" : "s"} added to your log.`);
+  }, [minutesInput, remainingSeconds, resetTimer, topic, totalSeconds]);
 
   useEffect(() => {
     if (status !== "running" || !endAt) return;
@@ -232,10 +212,10 @@ export default function FocusDashboard() {
 
   useEffect(() => {
     if (status === "running") {
-      document.title = `${formatTimer(remainingSeconds)} · ${topic}`;
+      document.title = `${formatTimer(remainingSeconds)} — ${topic}`;
       return;
     }
-    document.title = "Maxxing — Deliberate Practice Tracker";
+    document.title = "Maxxing — Focus with intent";
   }, [remainingSeconds, status, topic]);
 
   const activity = useMemo(() => {
@@ -279,40 +259,57 @@ export default function FocusDashboard() {
         : total;
     }, 0);
   }, [sessions]);
+
   const streak = calculateStreak(activity);
   const progress = totalSeconds
     ? ((totalSeconds - remainingSeconds) / totalSeconds) * 100
     : 0;
+  const canStart = topic.trim().length >= 3 && isValidDuration(minutesInput);
+
+  function handleTopicChange(value: string) {
+    setTopic(value);
+    setError("");
+    setMessage("");
+  }
 
   function handleDurationChange(value: string) {
     setMinutesInput(value);
+    setError("");
+    setMessage("");
+
     if (status !== "ready") return;
     const parsed = Number(value);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      const seconds = clampMinutes(parsed) * 60;
-      setTotalSeconds(seconds);
-      setRemainingSeconds(seconds);
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= MAX_MINUTES) {
+      setTotalSeconds(parsed * 60);
+      setRemainingSeconds(parsed * 60);
     }
   }
 
   function normalizeDuration() {
+    if (!minutesInput.trim()) {
+      setError("Enter a duration between 1 and 240 minutes.");
+      return;
+    }
     const normalized = clampMinutes(Number(minutesInput));
     setMinutesInput(String(normalized));
-    if (status === "ready") {
-      setTotalSeconds(normalized * 60);
-      setRemainingSeconds(normalized * 60);
-    }
+    setTotalSeconds(normalized * 60);
+    setRemainingSeconds(normalized * 60);
   }
 
   function startTimer() {
     if (!topic.trim()) {
-      setError("Write a specific learning target before starting.");
-      setMessage("");
+      setError("Add a specific outcome before starting.");
+      return;
+    }
+    if (!isValidDuration(minutesInput)) {
+      setError("Enter a duration between 1 and 240 minutes.");
       return;
     }
 
     const plannedMinutes = clampMinutes(Number(minutesInput));
     const seconds = status === "paused" ? remainingSeconds : plannedMinutes * 60;
+    completionLock.current = false;
+    setTopic(topic.trim());
     setMinutesInput(String(plannedMinutes));
     if (status !== "paused") {
       setTotalSeconds(seconds);
@@ -328,213 +325,92 @@ export default function FocusDashboard() {
     const pausedRemaining = endAt
       ? Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
       : remainingSeconds;
+
+    if (pausedRemaining === 0) {
+      completeSession(true);
+      return;
+    }
+
     setRemainingSeconds(pausedRemaining);
     setStatus("paused");
     setEndAt(null);
     setMessage("Session paused. Your remaining time is saved.");
   }
 
-  const statusLabel =
-    status === "running" ? "Focusing" : status === "paused" ? "Paused" : "Ready";
+  function discardTimer() {
+    completionLock.current = false;
+    resetTimer("Session discarded. Nothing was added to your log.");
+  }
+
+  function deleteSession(id: string) {
+    setSessions((current) => current.filter((session) => session.id !== id));
+    setMessage("Session removed from your log.");
+  }
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#focus" aria-label="Maxxing home">
-          <span className="brand-mark">M</span>
-          <span>
-            <strong>Maxxing</strong>
-            <small>Deliberate practice</small>
-          </span>
-        </a>
-        <div className="header-meta">
-          <span className="header-dot" />
-          Local only
+    <main className="app-shell" id="main-content">
+      <AppHeader />
+
+      <section className="hero-copy">
+        <div>
+          <p className="hero-kicker">Deliberate practice, made visible</p>
+          <h1>Put in the work.<br />Keep the proof.</h1>
         </div>
-      </header>
-
-      <section className="workspace" id="focus">
-        <div className="intro">
-          <div>
-            <p className="eyebrow">Personal focus timer</p>
-            <h1>Practice with intention.</h1>
-          </div>
-          <p className="lede">
-            Pick one skill, set the time, and let consistency do the rest.
-          </p>
-        </div>
-
-        <section className="focus-panel" aria-labelledby="session-heading">
-          <div className="session-form">
-            <div className="session-heading-row">
-              <h2 id="session-heading">Focus session</h2>
-              <div className={`status-badge status-${status}`}>
-                <span /> {statusLabel}
-              </div>
-            </div>
-
-            <div className="field-grid">
-              <label htmlFor="topic">
-                What are you learning?
-                <input
-                  id="topic"
-                  value={topic}
-                  onChange={(event) => setTopic(event.target.value)}
-                  disabled={status !== "ready"}
-                  maxLength={90}
-                  placeholder="e.g. Gradient descent fundamentals"
-                  autoComplete="off"
-                />
-              </label>
-              <label htmlFor="duration">
-                Minutes
-                <input
-                  id="duration"
-                  type="number"
-                  min="1"
-                  max={MAX_MINUTES}
-                  value={minutesInput}
-                  onChange={(event) => handleDurationChange(event.target.value)}
-                  onBlur={normalizeDuration}
-                  disabled={status !== "ready"}
-                  inputMode="numeric"
-                />
-              </label>
-            </div>
-
-            <div className="button-row">
-              {status === "ready" ? (
-                <button className="primary-button" type="button" onClick={startTimer}>
-                  <Play size={16} aria-hidden="true" /> Start focus
-                </button>
-              ) : (
-                <>
-                  {status === "running" ? (
-                    <button className="primary-button" type="button" onClick={pauseTimer}>
-                      <Pause size={16} aria-hidden="true" /> Pause
-                    </button>
-                  ) : (
-                    <button className="primary-button" type="button" onClick={startTimer}>
-                      <Play size={16} aria-hidden="true" /> Resume
-                    </button>
-                  )}
-                  <button className="secondary-button" type="button" onClick={() => completeSession(false)}>
-                    <Square size={15} aria-hidden="true" /> Finish & save
-                  </button>
-                </>
-              )}
-            </div>
-
-            <div className="form-message" aria-live="polite">
-              {error ? <span className="error-message">{error}</span> : message}
-            </div>
-          </div>
-
-          <div className="timer-area">
-            <div
-              className="timer-ring"
-              style={{ "--timer-progress": `${progress}%` } as React.CSSProperties}
-              role="timer"
-              aria-label={`${formatTimer(remainingSeconds)} remaining`}
-            >
-              <span>{formatTimer(remainingSeconds)}</span>
-            </div>
-            <p className="timer-topic">
-              {status === "ready" ? "Ready when you are" : topic}
-            </p>
-          </div>
-        </section>
-
-        <section className="stats-grid" aria-label="Learning statistics">
-          <article className="stat-card">
-            <span className="stat-icon"><Clock3 size={17} /></span>
-            <div><strong>{minutesLabel(todayMinutes)}</strong><span>Focused today</span></div>
-          </article>
-          <article className="stat-card">
-            <span className="stat-icon"><Flame size={17} /></span>
-            <div><strong>{streak} days</strong><span>Current streak</span></div>
-          </article>
-          <article className="stat-card">
-            <span className="stat-icon"><Target size={17} /></span>
-            <div><strong>{sessions.length}</strong><span>Sessions completed</span></div>
-          </article>
-        </section>
-
-        <section className="activity-layout">
-          <article className="activity-panel">
-            <div className="section-heading">
-              <h2>Practice activity</h2>
-              <span className="week-total">{minutesLabel(weekMinutes)} this week</span>
-            </div>
-
-            <div className="contribution-scroll">
-              <div className="contribution-grid" role="grid" aria-label="Learning contribution activity">
-                {contributionDays.map((day) => {
-                  const label = day.date.toLocaleDateString("en-US", {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  });
-                  return (
-                    <span
-                      key={day.key}
-                      className={`contribution-cell level-${contributionLevel(day.minutes)}${day.isToday ? " is-today" : ""}${day.isFuture ? " is-future" : ""}`}
-                      role="gridcell"
-                      aria-label={`${label}: ${day.minutes} focused minutes`}
-                      title={`${label} · ${day.minutes} minutes`}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="contribution-footer">
-              <span>{sessions.length ? "Every completed session adds color." : "Complete your first session to light up the grid."}</span>
-              <span className="legend" aria-label="Contribution intensity legend">
-                Less
-                {[0, 1, 2, 3, 4].map((level) => (
-                  <i className={`contribution-cell level-${level}`} key={level} />
-                ))}
-                More
-              </span>
-            </div>
-          </article>
-
-          <article className="recent-panel">
-            <div className="section-heading compact-heading">
-              <h2>Recent sessions</h2>
-              <BarChart3 size={19} aria-hidden="true" />
-            </div>
-
-            {sessions.length ? (
-              <ol className="session-list">
-                {sessions.slice(0, 5).map((session) => (
-                  <li key={session.id}>
-                    <span className="session-check"><Check size={14} /></span>
-                    <span className="session-detail">
-                      <strong>{session.topic}</strong>
-                      <small>
-                        {new Date(session.completedAt).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </small>
-                    </span>
-                    <span className="session-duration">{minutesLabel(session.durationMinutes)}</span>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <div className="empty-state">
-                <span className="empty-mark"><Target size={19} /></span>
-                <strong>No completed sessions yet</strong>
-                <p>Your first focused block will appear here.</p>
-              </div>
-            )}
-          </article>
-        </section>
+        <p className="hero-intro">
+          A quiet place to plan one focused block, do the work, and build a record
+          of the time you chose to invest.
+        </p>
       </section>
+
+      <div className="session-workspace" id="focus">
+        <SessionPlanner
+          topic={topic}
+          minutesInput={minutesInput}
+          status={status}
+          error={error}
+          canStart={canStart}
+          onTopicChange={handleTopicChange}
+          onDurationChange={handleDurationChange}
+          onDurationBlur={normalizeDuration}
+          onStart={startTimer}
+        />
+        <FocusTimer
+          topic={topic}
+          status={status}
+          remainingSeconds={remainingSeconds}
+          progress={progress}
+          onPause={pauseTimer}
+          onResume={startTimer}
+          onFinish={() => completeSession(false)}
+          onDiscard={discardTimer}
+        />
+      </div>
+
+      <div className={`notice-bar${message ? " is-visible" : ""}`} aria-live="polite">
+        <span aria-hidden="true" />
+        {message}
+      </div>
+
+      <PracticeStats
+        todayMinutes={todayMinutes}
+        weekMinutes={weekMinutes}
+        streak={streak}
+        sessionCount={sessions.length}
+      />
+
+      <section className="insights-layout" id="activity">
+        <PracticeActivity
+          days={hydrated ? contributionDays : []}
+          weekMinutes={weekMinutes}
+          sessionCount={sessions.length}
+        />
+        <SessionHistory sessions={sessions} onDelete={deleteSession} />
+      </section>
+
+      <footer className="site-footer">
+        <span>Maxxing / Practice with intent</span>
+        <span>Your data never leaves this browser.</span>
+      </footer>
     </main>
   );
 }
